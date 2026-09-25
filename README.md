@@ -1,80 +1,15 @@
-# Finlora — Data Cleaning (Stage 1)
+**Finlora: Data Cleaning & EDA Summary**
 
-Data cleaning stage for the Finlora fraud risk scoring project. This covers
-loading, validating, and cleaning the two raw source datasets ahead of EDA
-and feature engineering.
+Stage 1 cleaned two datasets a 7,200-row accounts table and a 126,000 row transactions table resolving nulls in `merchant_name`, `device_id`, and `is_new_device`, and converting `timestamp` to a proper datetime type. Both tables came out fully clean, with zero nulls and zero duplicates.
 
-## Datasets
+Stage 2 began by merging the two tables on `account_id` using a left join, which preserved all 126,000 transaction rows while attaching account-level details like KYC tier and account type. Overlapping column names from both tables (`account_type`, `kyc_tier`, `currency`, `home_country`) initially created duplicate `_x`/`_y` columns, which were resolved by dropping the redundant copies and renaming the rest.
 
-| File | Rows | Columns | Description |
-| `data/raw/finlora_accounts.csv` | 7,200 | 8 | One row per account — holder, type, KYC tier, spend baseline |
-| `data/raw/finlora_transactions.csv` | 126,000 | 24 | One row per transaction — amount, channel, device, fraud label |
+The target variable, `is_fraud`, turned out to be heavily imbalanced only 2.66% of transactions are fraud, meaning accuracy alone won't be a meaningful metric for any model built later; precision, recall, and AUC will matter more.
 
-### Accounts schema
+Several features showed strong, genuine fraud signals. `Amount` was around 20 times higher for fraud transactions at the median. `Amount_to_avg_ratio` how unusual a transaction is relative to that account's normal spending was about 6 times higher for fraud at the median, and the gap widened dramatically at higher percentiles, making it especially good at catching extreme, obvious fraud cases. `Transaction_velocity_1h` showed the strongest overall correlation with fraud at 0.577, suggesting rapid repeat transactions are a meaningful, consistent fraud indicator. By contrast, `account_age_days` showed almost no difference between fraud and non-fraud groups and was ruled out, as were negative transaction amounts, which actually showed a slightly lower fraud rate than the overall baseline.
 
-`account_id`, `account_holder_name`, `account_type` (Individual / Business),
-`home_country`, `currency`, `kyc_tier`, `account_created_date`,
-`personal_spend_baseline_usd`
+Category-level patterns also emerged. Business accounts had nearly double the fraud rate of Individual accounts (3.94% versus 1.98%). Lower-verification KYC tiers carried more risk than higher tiers — Tier1_Basic sat at 3.25% fraud versus 2.20% for Tier3_Enhanced. Among merchant categories, Wire Transfer, Payroll Transfer, and Crypto Exchange had the highest fraud rates, all well above the 2.66% baseline, while everyday spending categories like restaurants and groceries sat well below it. Channel showed a smaller effect, with API/Integration slightly elevated and USSD the lowest.
 
-### Transactions schema
+Finally, a correlation check across all numeric features found no pair strongly correlated with each other, meaning there's no dangerous redundancy to worry about heading into modeling.
 
-`transaction_id`, `account_id`, `account_type`, `kyc_tier`, `timestamp`,
-`day_of_week`, `hour_of_day`, `description`, `merchant_name`,
-`merchant_category`, `channel`, `amount`, `currency`, `amount_to_avg_ratio`,
-`avg_transaction_amount_30d`, `transaction_velocity_1h`,
-`transaction_country`, `home_country`, `is_cross_border`, `device_id`,
-`is_new_device`, `account_age_days`, `status`, `is_fraud` (target)
-
-## Cleaning Steps
-
-1. **Load the data**
-   ```python
-   acct = pd.read_csv("data/raw/finlora_accounts.csv")
-   txn = pd.read_csv("data/raw/finlora_transactions.csv")
-   ```
-
-2. **Validate the accounts table**
-   - `acct.info()` — confirmed all 8 columns fully populated (7,200 non-null)
-   - `acct.isnull().sum()` — zero nulls across every column
-   - `acct.duplicated().sum()` — zero duplicate rows
-   - Spot-checked `account_holder_name`, `personal_spend_baseline_usd`, and
-     `account_type` with `.unique()` to catch unexpected categories or typos
-
-3. **Validate the transactions table**
-   - `txn.info()` — 126,000 rows across 24 columns
-   - `txn.isnull().sum()` — identified nulls in three columns:
-     - `merchant_name`: 28,610 missing
-     - `device_id`: 14,334 missing
-     - `is_new_device`: 14,334 missing
-   - `txn.duplicated().sum()` — zero duplicate rows
-
-4. **Handle missing values**
-   ```python
-   txn['merchant_name'] = txn['merchant_name'].fillna('Unknown')
-   txn['device_id'] = txn['device_id'].fillna('Unknown_id')
-   ```
-   `is_new_device` nulls were cleaned and imputed alongside `device_id`
-   (rows missing a device ID had no device history to flag as new/not new).
-
-5. **Fix data types**
-   ```python
-   txn['timestamp'] = pd.to_datetime(txn['timestamp'], format='%Y-%m-%d %H:%M:%S')
-   ```
-   Converted `timestamp` from string to `datetime64` for downstream time-based
-   feature engineering.
-
-6. **Final validation**
-   - Re-ran `txn.isnull().sum()` — zero nulls across all 24 columns
-   - Re-ran `txn.duplicated().sum()` — zero duplicates confirmed
-
-## Result
-
-Both `acct` and `txn` are fully clean: no missing values, no duplicate rows,
-correct data types on the timestamp field. Ready to move into Stage 2 (EDA).
-
-## Tools & Environment
-
-- **Language:** Python 3.12
-- **Core libraries:** pandas, numpy, matplotlib, seaborn
-- **Environment:** VS Code + Jupyter Notebooks, `.venv` virtual environment
-- **Notebook:** `notebook/01_data_cleaning.ipynb`
+Overall, the EDA stage is complete. Fraud in this dataset is rare but shows consistent, explainable patterns tied to transaction size, spending behavior relative to the account's norm, transaction velocity, account type, KYC tier, and merchant category all of which give a solid foundation to build features from in Stage 3.
